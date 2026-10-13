@@ -1,9 +1,33 @@
+# Python cache — auto-generated, never commit
 __pycache__/
 *.pyc
-.vscode/
-.idea/
+*.pyo
+
+# Virtual environments — personal, not shared
 .venv/
 env/
+venv/
+
+# Editor settings — personal
+.vscode/
+.idea/
+*.swp
+
+# Images — large files, ignored by default
 *.png
 *.jpg
-!data/*.jpg
+*.jpeg
+*.bmp
+*.tiff
+
+# EXCEPTION: test samples ARE committed so everyone uses the same inputs
+!data/samples/*.jpg
+!data/samples/*.png
+!data/samples/*.jpeg
+
+# Generated outputs — never commit results
+data/outputs/
+
+# OS junk
+.DS_Store
+Thumbs.db
