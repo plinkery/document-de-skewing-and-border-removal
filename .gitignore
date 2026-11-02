@@ -1,33 +1,92 @@
-# Python cache — auto-generated, never commit
+# =============================================================================
+# .gitignore for ipcv-project
+# =============================================================================
+# RULE: If you're not sure whether to commit a file, check this file first.
+#       If it matches a pattern below, Git already ignores it — don't force-add it.
+# =============================================================================
+
+# --- Python cache (auto-generated, never useful to share) --------------------
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
 
-# Virtual environments — personal, not shared
+# --- Virtual environments (each person creates their own locally) ------------
 .venv/
 env/
 venv/
+.env
 
-# Editor settings — personal
+# --- Editor / IDE settings (personal, not project code) ---------------------
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 
-# Images — large files, ignored by default
-*.png
-*.jpg
-*.jpeg
-*.bmp
-*.tiff
-
-# EXCEPTION: test samples ARE committed so everyone uses the same inputs
-!data/samples/*.jpg
-!data/samples/*.png
-!data/samples/*.jpeg
-
-# Generated outputs — never commit results
-data/outputs/
-
-# OS junk
+# --- OS junk -----------------------------------------------------------------
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# =============================================================================
+# IMAGE FILES — THE MOST IMPORTANT SECTION
+# =============================================================================
+# By default, ALL image files are ignored.
+# This prevents anyone from accidentally committing output images
+# (which can be large and are not source code).
+
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tif
+*.tiff
+*.gif
+*.webp
+
+# --- EXCEPTION: the shared test images in data/samples/ ARE committed --------
+# These are the input images everyone tests on. They must be in the repo
+# so all teammates use identical inputs.
+!data/samples/
+!data/samples/*.jpg
+!data/samples/*.jpeg
+!data/samples/*.png
+!data/samples/*.bmp
+!data/samples/*.tif
+!data/samples/*.tiff
+
+# =============================================================================
+# OUTPUT DIRECTORIES — NEVER COMMIT ANYTHING FROM THESE
+# =============================================================================
+# All generated/test output images go here. Git completely ignores them.
+# You can create as many test images as you want inside these folders —
+# they will NEVER accidentally get pushed to GitHub.
+
+data/outputs/
+data/outputs/**
+
+# Per-person debug/test output folders (also inside data/outputs/, but listed
+# explicitly so there is no confusion):
+data/outputs/debug/
+data/outputs/morphology_debug/
+data/outputs/preprocessing_debug/
+data/outputs/deskew_debug/
+data/outputs/border_debug/
+data/outputs/pipeline_debug/
+
+# =============================================================================
+# SAFE ZONE REMINDER (for AI agents and teammates)
+# =============================================================================
+# Files you SHOULD commit:
+#   modules/*.py          ← your own module file only
+#   tests/test_YOUR.py    ← your own test file only (if you update it)
+#   docs/*.md             ← documentation
+#   data/samples/         ← shared test input images (already committed)
+#
+# Files you must NEVER commit:
+#   data/outputs/         ← any result, debug, or comparison image
+#   modules/<other>.py    ← anyone else's module
+#   main.py               ← only Person 4 touches this
+#   .venv/                ← your virtual environment
