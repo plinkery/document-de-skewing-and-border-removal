@@ -1,10 +1,11 @@
 """
-test_morphology.py - Person 2 runs this before merging
+test_morphology.py - Person 2 Unit & Integration Tests
 =======================================================
 Run:
     python3 tests/test_morphology.py                        # synthetic tests only
-    python3 tests/test_morphology.py --real                 # also test on real images
-    python3 tests/test_morphology.py --real --debug         # save debug images too
+    python3 tests/test_morphology.py --real                 # test on up to 15 real images in data/samples/
+    python3 tests/test_morphology.py --real --count 10      # test on exactly 10 real images
+    python3 tests/test_morphology.py --real --debug         # also save side-by-side comparison images
 
 Tests covered
 -------------
@@ -12,12 +13,12 @@ Tests covered
 2. Output is strictly binary (only 0 and 255)
 3. Opening removes an isolated single-pixel noise dot
 4. Closing fills a small gap inside a solid region
-5. (--real) Runs on actual sample images from data/samples/ and
-   saves before/after comparison images to data/outputs/morphology_debug/
-
-These tests work whether or not Person 1's preprocessing.py is complete,
-because they generate synthetic binary inputs internally.  When Person 1
-finishes, you can chain them together using the --chain flag.
+5. Real Image Integration:
+   - Takes real images from data/samples/ (including data/samples/original/)
+   - Runs Person 1's preprocess_image() to generate the binary image
+   - Runs Person 2's apply_morphology() on Person 1's output
+   - Verifies the contract at each stage
+   - In --debug mode, saves visual side-by-side comparisons to data/outputs/morphology_debug/
 """
 
 import numpy as np
@@ -26,13 +27,15 @@ import os
 import argparse
 import cv2
 
-# Allow running from the project root or from inside tests/
+# Allow running from project root or tests/
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from modules.preprocessing import preprocess_image
 from modules.morphology import apply_morphology, custom_erode, custom_dilate
 
 
 # ===========================================================================
-# Synthetic (no real image needed) tests
+# Synthetic unit tests
 # ===========================================================================
 
 def test_shape_preserved():
@@ -71,14 +74,11 @@ def test_output_dtype():
 def test_opening_removes_noise():
     """
     Opening (erode then dilate) should remove a single isolated white pixel.
-    A 1-pixel white dot surrounded by black is smaller than our 3x3 kernel,
-    so it disappears after erosion and does not come back after dilation.
     """
     img = np.zeros((20, 20), dtype=np.uint8)
     img[10, 10] = 255               # single isolated noise pixel
 
     eroded = custom_erode(img, kernel_size=3)
-
     assert eroded[10, 10] == 0, (
         f"FAIL: isolated noise pixel survived erosion (value={eroded[10,10]})"
     )
@@ -93,9 +93,6 @@ def test_dilation_expands_region():
     img[4:6, 4:6] = 255             # 2x2 white square
 
     dilated = custom_dilate(img, kernel_size=3)
-
-    # After dilation with a 3x3 kernel the white region grows by 1 pixel each way
-    # so pixels at (3,3) should now be white
     assert dilated[3, 3] == 255, (
         f"FAIL: dilation did not expand region (pixel (3,3) = {dilated[3,3]})"
     )
@@ -104,105 +101,119 @@ def test_dilation_expands_region():
 
 def test_closing_fills_gap():
     """
-    Closing (dilate then erode) should fill a small black gap inside a white bar.
+    Closing should fill small black gaps inside a white bar.
     """
     img = np.zeros((20, 20), dtype=np.uint8)
     img[5:15, 3:17] = 255           # thick white bar
-    img[9:11, 9:11] = 0             # small 2x2 black hole in the middle
+    img[9:11, 9:11] = 0             # 2x2 black hole in the middle
 
-    # The hole should be filled after closing
     result = apply_morphology(img)
-    # Expect the centre pixels of the hole to be filled (255)
     filled = result[9, 9]
-    print(f"INFO: gap-fill test: centre of gap after morphology = {filled} "
-          f"(expected 255 after real implementation)")
+    print(f"INFO: gap-fill test: centre pixel after morphology = {filled}")
     if filled == 255:
         print("PASS: closing filled the internal gap")
     else:
-        print("INFO: gap was not filled - may need larger kernel in closing step")
+        print("INFO: gap was not completely filled")
 
 
 # ===========================================================================
-# Real-image tests (run with --real flag)
+# Real-image tests (Integrated with Person 1's Preprocessing)
 # ===========================================================================
 
-def test_on_real_images(debug: bool = False) -> None:
+def find_sample_images(base_dir: str = "data/samples"):
+    """Recursively discover image files under base_dir."""
+    valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
+    found = []
+    if not os.path.exists(base_dir):
+        return found
+    for root, _, files in os.walk(base_dir):
+        for f in files:
+            if f.lower().endswith(valid_exts):
+                found.append(os.path.join(root, f))
+    # Return natural sorted list
+    return sorted(found)
+
+
+def test_on_real_images(count: int = 15, debug: bool = False) -> None:
     """
-    Run apply_morphology on every image in data/samples/ and verify the
-    contract (shape, dtype, binary values).  Optionally save side-by-side
-    comparison images.
-
-    This test works INDEPENDENTLY of Person 1's preprocessing.py.
-    We convert the sample image to grayscale and threshold it ourselves
-    here (using Otsu) to get a binary image - exactly the kind of input
-    that Person 1's module will produce.
-
-    When Person 1's module is merged, you can replace the inline conversion
-    below with:
-        from modules.preprocessing import preprocess_image
-        binary = preprocess_image(img)
+    Runs Person 1's preprocess_image() followed by Person 2's apply_morphology()
+    on actual document images from data/samples/ (including subfolders).
     """
-    samples_dir = "data/samples"
-    out_dir     = "data/outputs/morphology_debug"
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = "data/outputs/morphology_debug"
+    if debug:
+        os.makedirs(out_dir, exist_ok=True)
 
-    image_files = [
-        f for f in os.listdir(samples_dir)
-        if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'))
-    ]
-
-    if not image_files:
-        print(f"WARNING: No images found in {samples_dir}/")
-        print("         Add .jpg or .png files there and re-run.")
+    all_images = find_sample_images("data/samples")
+    if not all_images:
+        print("WARNING: No images found in data/samples/ or data/samples/original/")
+        print("         Please ensure images are placed in data/samples/original/")
         return
 
+    test_images = all_images[:count]
+    print(f"Found {len(all_images)} images. Running on {len(test_images)} image(s)...")
+
     all_passed = True
-    for fname in sorted(image_files):
-        fpath = os.path.join(samples_dir, fname)
-        img   = cv2.imread(fpath)
+    for idx, fpath in enumerate(test_images, 1):
+        fname = os.path.basename(fpath)
+        img = cv2.imread(fpath)
         if img is None:
-            print(f"SKIP: could not read {fname}")
+            print(f"[{idx}/{len(test_images)}] SKIP: could not read {fpath}")
             continue
 
-        # -- Simulate Person 1's output: grayscale + Otsu threshold ----------
-        gray   = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        # NOTE: once Person 1 merges, replace the 2 lines above with:
-        #   from modules.preprocessing import preprocess_image
-        #   bin_img = preprocess_image(img)
-
-        # -- Run our morphology ----------------------------------------------
-        result = apply_morphology(bin_img)
-
-        # -- Contract checks -------------------------------------------------
-        ok = True
-        if result.shape != bin_img.shape:
-            print(f"FAIL [{fname}]: shape changed {bin_img.shape} -> {result.shape}")
-            ok = False
-        if result.dtype != np.uint8:
-            print(f"FAIL [{fname}]: dtype {result.dtype} (expected uint8)")
-            ok = False
-        unique = set(np.unique(result).tolist())
-        if not unique.issubset({0, 255}):
-            print(f"FAIL [{fname}]: non-binary values: {unique}")
-            ok = False
-
-        if ok:
-            print(f"PASS [{fname}]: shape={result.shape}, dtype={result.dtype}")
-        else:
+        # 1. Step 1: Person 1's Preprocessing
+        try:
+            binary_preprocessed = preprocess_image(img)
+        except Exception as e:
+            print(f"[{idx}/{len(test_images)}] FAIL [{fname}]: Preprocessing threw error: {e}")
             all_passed = False
+            continue
 
-        # -- Save side-by-side before/after comparison -----------------------
+        # Verify Person 1 contract
+        if binary_preprocessed.shape != (img.shape[0], img.shape[1]):
+            print(f"[{idx}/{len(test_images)}] FAIL [{fname}]: Preprocessed shape mismatch")
+            all_passed = False
+            continue
+
+        # 2. Step 2: Person 2's Morphology on Person 1's output
+        try:
+            cleaned_morphology = apply_morphology(binary_preprocessed)
+        except Exception as e:
+            print(f"[{idx}/{len(test_images)}] FAIL [{fname}]: Morphology threw error: {e}")
+            all_passed = False
+            continue
+
+        # Verify Person 2 contract
+        if cleaned_morphology.shape != binary_preprocessed.shape:
+            print(f"[{idx}/{len(test_images)}] FAIL [{fname}]: Morphology shape changed: {cleaned_morphology.shape}")
+            all_passed = False
+            continue
+        if cleaned_morphology.dtype != np.uint8:
+            print(f"[{idx}/{len(test_images)}] FAIL [{fname}]: Morphology dtype {cleaned_morphology.dtype} != uint8")
+            all_passed = False
+            continue
+        unique_vals = set(np.unique(cleaned_morphology).tolist())
+        if not unique_vals.issubset({0, 255}):
+            print(f"[{idx}/{len(test_images)}] FAIL [{fname}]: Non-binary values in morphology: {unique_vals}")
+            all_passed = False
+            continue
+
+        print(f"[{idx}/{len(test_images)}] PASS [{fname}]: Preprocessing -> Morphology OK ({img.shape[1]}x{img.shape[0]})")
+
+        # 3. Save visual comparison if --debug is enabled
         if debug:
-            comparison = np.hstack([bin_img, result])
-            out_path   = os.path.join(out_dir, f"morphology_{fname}")
-            cv2.imwrite(out_path, comparison)
-            print(f"      [debug] saved comparison: {out_path}")
+            base_name = os.path.splitext(fname)[0]
+            # Convert original grayscale to 8-bit for a 3-panel comparison:
+            gray_orig = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # Panel: [Original Grayscale | Person 1 Binary | Person 2 Cleaned Morphology]
+            panel = np.hstack([gray_orig, binary_preprocessed, cleaned_morphology])
+            out_path = os.path.join(out_dir, f"compare_{base_name}.png")
+            cv2.imwrite(out_path, panel)
+            print(f"      [debug] saved 3-panel comparison to: {out_path}")
 
     if all_passed:
-        print("PASS: all real images passed the morphology contract checks")
+        print("\nSUCCESS: All tested images passed Preprocessing + Morphology integration checks!")
     else:
-        print("FAIL: some real images failed - see messages above")
+        print("\nFAILURE: Some images failed contract checks. See errors above.")
 
 
 # ===========================================================================
@@ -211,17 +222,19 @@ def test_on_real_images(debug: bool = False) -> None:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Morphology module tests")
-    parser.add_argument('--real',  action='store_true',
+    parser.add_argument('--real', action='store_true',
                         help='Also run tests on real images in data/samples/')
+    parser.add_argument('--count', type=int, default=15,
+                        help='Number of real images to test (default: 15)')
     parser.add_argument('--debug', action='store_true',
-                        help='Save before/after images for visual inspection')
+                        help='Save 3-panel comparison images to data/outputs/morphology_debug/')
     args = parser.parse_args()
 
-    print("=" * 50)
-    print("  Morphology Module Tests")
-    print("=" * 50)
+    print("=" * 60)
+    print("  Morphology Module Unit & Integration Tests")
+    print("=" * 60)
 
-    # Synthetic tests - always run
+    # 1. Standard synthetic tests
     test_shape_preserved()
     test_output_is_binary()
     test_output_dtype()
@@ -229,11 +242,13 @@ if __name__ == '__main__':
     test_dilation_expands_region()
     test_closing_fills_gap()
 
-    # Real image tests - only when --real is passed
+    # 2. Real image integration tests
     if args.real:
         print()
-        print("--- Real image tests ---")
-        test_on_real_images(debug=args.debug)
+        print(f"--- Real Image Integration Tests (Testing up to {args.count} images) ---")
+        test_on_real_images(count=args.count, debug=args.debug)
 
     print()
-    print("All tests completed.")
+    print("=" * 60)
+    print("Completed.")
+    print("=" * 60)

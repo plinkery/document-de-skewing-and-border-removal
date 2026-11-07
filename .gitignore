@@ -20,6 +20,7 @@ venv/
 
 # --- Editor / IDE settings (personal, not project code) ---------------------
 .vscode/
+.vs
 .idea/
 *.swp
 *.swo
