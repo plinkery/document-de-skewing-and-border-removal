@@ -42,6 +42,42 @@ from modules.deskew          import deskew_image
 from modules.border_removal  import remove_borders
 
 
+# ---- Helper: resolve and locate image path --------------------------------
+
+def _resolve_image_path(image_path: str) -> str:
+    """Find the image path even if relative to data/samples/ or case differs."""
+    if os.path.exists(image_path):
+        return image_path
+
+    # Try common subfolder locations
+    candidates = [
+        os.path.join("data/samples", image_path),
+        os.path.join("data/samples/original", image_path),
+        os.path.join("data/samples/original", os.path.basename(image_path)),
+        os.path.join("data/samples", os.path.basename(image_path)),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+
+    # Case-insensitive / recursive search in data/samples
+    target_base = os.path.basename(image_path).lower()
+    if os.path.exists("data/samples"):
+        for root, _, files in os.walk("data/samples"):
+            for f in files:
+                if f.lower() == target_base:
+                    return os.path.join(root, f)
+
+    # If it was the default sample1.jpg, find any available sample image
+    if image_path == "data/samples/sample1.jpg" and os.path.exists("data/samples"):
+        for root, _, files in os.walk("data/samples"):
+            for f in files:
+                if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')):
+                    return os.path.join(root, f)
+
+    return image_path
+
+
 # ---- Helper: save an intermediate debug image ------------------------------
 
 def _save_debug(img: np.ndarray, name: str, out_dir: str) -> None:
@@ -75,13 +111,14 @@ def run_pipeline(image_path: str, debug: bool = False) -> np.ndarray:
     debug_dir = "data/outputs/debug"
 
     # ---- Load the original image -------------------------------------------
-    raw_img = cv2.imread(image_path)
+    resolved_path = _resolve_image_path(image_path)
+    raw_img = cv2.imread(resolved_path)
     if raw_img is None:
         raise FileNotFoundError(
-            f"Could not load image: {image_path}\n"
-            f"Make sure the path is correct and the file exists."
+            f"Could not load image from '{image_path}' (resolved to '{resolved_path}').\n"
+            f"Make sure the path is correct and the file exists in data/samples/."
         )
-    print(f"Loaded: {image_path}  shape={raw_img.shape}")
+    print(f"Loaded: {resolved_path}  shape={raw_img.shape}")
     if debug:
         _save_debug(raw_img, "0_original.jpg", debug_dir)
 
