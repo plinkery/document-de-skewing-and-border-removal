@@ -451,8 +451,14 @@ def remove_borders(img: np.ndarray) -> np.ndarray:
         raise ValueError(
             f"[border_removal] expected a 3-channel colour image (H, W, 3), got shape {img.shape}"
         )
+    if img.dtype != np.uint8:
+        raise ValueError(
+            f"[border_removal] expected dtype uint8, got {img.dtype}"
+        )
     if img.shape[0] == 0 or img.shape[1] == 0:
-        return img
+        raise ValueError(
+            f"[border_removal] expected a non-empty image, got shape {img.shape}"
+        )
 
     H, W = img.shape[:2]
 

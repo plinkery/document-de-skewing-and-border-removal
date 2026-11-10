@@ -33,6 +33,7 @@ import numpy as np
 import sys
 import os
 import argparse
+from pathlib import Path
 
 
 # ---- Import all four modules -----------------------------------------------
@@ -40,6 +41,23 @@ from modules.preprocessing  import preprocess_image
 from modules.morphology      import apply_morphology
 from modules.deskew          import deskew_image
 from modules.border_removal  import remove_borders
+
+
+SAMPLE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+
+
+def discover_sample_images(samples_dir: str = "data/samples") -> list[str]:
+    """Return supported sample-image paths recursively in stable order."""
+    root = Path(samples_dir)
+    if not root.is_dir():
+        return []
+
+    paths = [
+        str(path)
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in SAMPLE_EXTENSIONS
+    ]
+    return sorted(paths, key=str.casefold)
 
 
 # ---- Helper: save an intermediate debug image ------------------------------
@@ -165,8 +183,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "image_path",
         nargs="?",
-        default="data/samples/sample1.jpg",
-        help="Path to the input image (default: data/samples/sample1.jpg)"
+        default=None,
+        help="Path to the input image (defaults to the first image under data/samples/)"
     )
     parser.add_argument(
         "--debug",
@@ -174,6 +192,13 @@ if __name__ == "__main__":
         help="Save intermediate images after each pipeline step"
     )
     args = parser.parse_args()
+    if args.image_path is None:
+        sample_images = discover_sample_images()
+        if not sample_images:
+            parser.error(
+                "no sample images found under data/samples; provide an image path"
+            )
+        args.image_path = sample_images[0]
 
     print("=" * 55)
     print("  Document De-skew & Border Removal Pipeline")

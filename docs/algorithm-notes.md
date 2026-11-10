@@ -144,28 +144,76 @@ return (rotated_image, dominant_angle)
 
 ## Person 4 — Custom Border Detection  (border_removal.py)
 
-*(Fill in when implemented)*
-
 **Algorithm name:** Row/Column Projection Scanning
 **Implemented by:** Person 4
-**File and function:** `modules/border_removal.py → remove_borders()`
+**File and functions:** `modules/border_removal.py → remove_borders(), detect_document_boundaries(), compute_horizontal_projection(), compute_vertical_projection(), scan_boundary_inward()`
 
 **What it does:**
 
-**Inputs and outputs:**
+`remove_borders()` accepts a non-empty BGR `uint8` image and returns a
+contiguous BGR crop with the same dtype. It converts the image to grayscale
+only for analysis, detects the four page limits, and slices the original color
+image so the output retains its source pixels.
+
+**Detection logic:**
+
+1. Non-empty images smaller than 10 pixels in either dimension, and images
+  with less than 15 levels of grayscale contrast, are treated as unreliable
+  and kept unchanged.
+2. The median intensity of each outer 2% edge strip is compared with percentiles
+   of the central 20%–80% region. The 75th percentile estimates light paper;
+   the 25th percentile and median help identify dark paper. A broad 10%–90%
+   interior median helps avoid mistaking natural white margins around dark
+   illustrations for an external light border.
+3. If an edge differs from the estimated substrate by at least 30 intensity
+   levels, the image is blurred with a 5×5 Gaussian kernel and Otsu-thresholded
+   with the polarity selected for light or dark document content. Dark-page
+   detection additionally requires dark-substrate evidence and applies the
+   borderless-white-page safeguard.
+4. The binary mask is reduced to row and column densities: each projection
+   value is the fraction of white mask pixels in that row or column. The scan
+   threshold is the greater of 0.04 and 8% of the strongest projection. Each
+   edge scan requires at least three consecutive qualifying rows or columns
+   (or 0.2% of the corresponding dimension, whichever is larger).
+5. A 0.5% safety margin is added to detected crop edges. Invalid or
+   over-aggressive bounds, leaving less than 20% of either source dimension,
+   are rejected in favor of the original bounds.
 
 **Core logic / pseudocode:**
 ```
-convert img to grayscale
-compute row_sums = sum of pixel values along each row
-compute col_sums = sum of pixel values along each column
-top    = first row where row_sum < threshold * width
-bottom = last  row where row_sum < threshold * width
-left   = first col where col_sum < threshold * height
-right  = last  col where col_sum < threshold * height
-return img[top:bottom, left:right]
+validate non-empty BGR uint8 input
+gray = convert BGR image to grayscale
+measure four edge medians, central percentiles, and broad interior median
+if light-page evidence and a dark edge transition:
+  mask = Otsu threshold with light content as foreground
+elif dark-page evidence, a light edge transition, and dark-page safeguards:
+  mask = inverse Otsu threshold with dark content as foreground
+else:
+  return original bounds
+
+for horizontal and vertical projections:
+  compute foreground fraction for every row or column
+  scan inward from both ends for a consecutive run over the adaptive threshold
+expand detected bounds by safety padding
+if bounds are invalid or retain less than 20% of either dimension:
+  return original bounds
+return original BGR image sliced to the accepted bounds
 ```
 
 **Why this approach:**
+Independent edge medians allow one-, two-, three-, or four-sided borders to be
+considered separately. Projection densities and consecutive-hit scans are
+custom NumPy/Python logic; OpenCV is used for grayscale conversion, Gaussian
+blur, and Otsu thresholding. Cropping the original image avoids modifying
+document colors during analysis.
 
-**OpenCV alternative:**
+**Fallbacks and limitations:**
+Uniform/low-contrast images, ambiguous substrate classification, weak
+projection evidence, and implausible crop bounds safely return the full image.
+These safeguards favor avoiding destructive crops, so genuine borders can be
+left in place (false negatives). Global Otsu thresholding and one-dimensional
+projections cannot reliably distinguish a scanner border from page content
+touching an edge, strong gradients/shadows, or some large illustrations. The
+fixed intensity thresholds may also be sensitive to lighting and paper tone.
+The function expects an already deskewed image; skew correction is owned by
+Person 3 and is not implemented here.

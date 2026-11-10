@@ -405,33 +405,26 @@ def test_scenario_17_tiny_images_invalid_inputs_contiguity():
     res_tiny = remove_borders(img_tiny)
     assert res_tiny.shape == (5, 5, 3), f"Tiny image failed: {res_tiny.shape}"
 
-    # 2. None
-    try:
-        remove_borders(None)
-        assert False, "None did not raise ValueError"
-    except ValueError:
-        pass
-
-    # 3. 2D array
-    try:
-        remove_borders(np.zeros((100, 100), dtype=np.uint8))
-        assert False, "2D did not raise ValueError"
-    except ValueError:
-        pass
-
-    # 4. 4-channel image
-    try:
-        remove_borders(np.zeros((100, 100, 4), dtype=np.uint8))
-        assert False, "4-channel did not raise ValueError"
-    except ValueError:
-        pass
-
-    # 5. String
-    try:
-        remove_borders("not an image")
-        assert False, "String did not raise ValueError"
-    except ValueError:
-        pass
+    # Invalid inputs must fail with contract-specific messages.
+    invalid_inputs = [
+        (None, "valid NumPy array"),
+        (np.zeros((100, 100), dtype=np.uint8), "3-channel"),
+        (np.zeros((100, 100, 4), dtype=np.uint8), "3-channel"),
+        ("not an image", "valid NumPy array"),
+        (np.zeros((100, 100, 3), dtype=np.float32), "dtype uint8"),
+        (np.zeros((100, 100, 3), dtype=np.uint16), "dtype uint8"),
+        (np.zeros((0, 100, 3), dtype=np.uint8), "non-empty image"),
+        (np.zeros((100, 0, 3), dtype=np.uint8), "non-empty image"),
+    ]
+    for invalid_img, expected_message in invalid_inputs:
+        try:
+            remove_borders(invalid_img)
+        except ValueError as error:
+            assert expected_message in str(error), (
+                f"Expected {expected_message!r} in error, got {error!r}"
+            )
+        else:
+            raise AssertionError(f"Expected ValueError containing {expected_message!r}")
 
     # 6. Format and memory contiguity
     fake = np.random.randint(0, 255, (200, 300, 3), dtype=np.uint8)
