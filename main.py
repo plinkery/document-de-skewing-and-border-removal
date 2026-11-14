@@ -86,6 +86,23 @@ def _resolve_image_path(image_path: str) -> str:
     return image_path
 
 
+SAMPLE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+
+
+def discover_sample_images(samples_dir: str = "data/samples") -> list[str]:
+    """Return supported sample-image paths recursively in stable order."""
+    root = Path(samples_dir)
+    if not root.is_dir():
+        return []
+
+    paths = [
+        str(path)
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in SAMPLE_EXTENSIONS
+    ]
+    return sorted(paths, key=str.casefold)
+
+
 # ---- Helper: save an intermediate debug image ------------------------------
 
 def _save_debug(img: np.ndarray, name: str, out_dir: str) -> None:
