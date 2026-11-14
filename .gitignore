@@ -51,12 +51,16 @@ desktop.ini
 # These are the input images everyone tests on. They must be in the repo
 # so all teammates use identical inputs.
 !data/samples/
-!data/samples/*.jpg
-!data/samples/*.jpeg
-!data/samples/*.png
-!data/samples/*.bmp
-!data/samples/*.tif
-!data/samples/*.tiff
+!data/samples/**
+!data/samples/**/*.jpg
+!data/samples/**/*.jpeg
+!data/samples/**/*.png
+!data/samples/**/*.bmp
+!data/samples/**/*.tif
+!data/samples/**/*.tiff
+!data/samples/**/*.JPG
+!data/samples/**/*.JPEG
+!data/samples/**/*.PNG
 
 # =============================================================================
 # OUTPUT DIRECTORIES — NEVER COMMIT ANYTHING FROM THESE
