@@ -99,66 +99,58 @@ def compute_line_angle(x1: int, y1: int, x2: int, y2: int) -> float:
     return angle_deg
 
 
-def filter_near_horizontal(angles: list, max_skew: float = 15.0) -> list:
+def normalize_to_skew(angle: float) -> float:
+    """
+    Map an angle to document tilt relative to the orthogonal page grid [-45°, +45°].
+    Both horizontal text lines (~0°) and vertical margin/page edges (~±90°)
+    yield the same document tilt estimate.
+    """
+    if angle > 45.0:
+        return angle - 90.0
+    elif angle < -45.0:
+        return angle + 90.0
+    return angle
+
+
+def filter_near_horizontal(angles: list, max_skew: float = 20.0) -> list:
     """
     Retain only angles that could represent document skew.
 
-    Document skew is usually a small tilt (< 10°), and horizontal text lines
-    produce near-horizontal Hough line segments.  Steep lines (table borders,
-    vertical strokes) are part of the page content and should not influence
-    the skew estimate.
+    Document skew is usually a tilt within [-20°, +20°]. By normalizing lines
+    modulo 90°, both horizontal text lines and vertical page boundaries contribute
+    to the estimate, while steep diagonals (e.g. wood grain at 55°-65°) are excluded.
 
     Parameters
     ----------
     angles   : list of float   All line angles from compute_line_angle().
-    max_skew : float           Maximum absolute angle accepted (degrees).
-                               Default 15° is generous; most scanned docs
-                               tilt less than 5°.
+    max_skew : float           Maximum absolute tilt accepted (degrees).
 
     Returns
     -------
-    list of float   Subset of angles within [-max_skew, +max_skew].
+    list of float   Subset of normalized angles within [-max_skew, +max_skew].
     """
     filtered = []
     for a in angles:
-        if -max_skew <= a <= max_skew:
-            filtered.append(a)
+        skew = normalize_to_skew(a)
+        if -max_skew <= skew <= max_skew:
+            filtered.append(skew)
     return filtered
 
 
-def build_angle_histogram(angles: list, bin_width: float = 0.5) -> dict:
+def build_angle_histogram(angles: list, weights: list = None, bin_width: float = 0.5) -> dict:
     """
-    Build a 1-D histogram (frequency table) of angles.
+    Build a 1-D histogram (frequency table) of angles, optionally weighted by line length.
 
     Each angle is rounded to the nearest multiple of bin_width and placed
-    in the corresponding bin.  The histogram is stored as a plain Python
-    dict: {bin_centre -> count}.
-
-    Parameters
-    ----------
-    angles    : list of float   Filtered near-horizontal angles.
-    bin_width : float           Width of each histogram bin in degrees.
-                                0.5° gives 0.5° angular resolution.
-
-    Returns
-    -------
-    dict  {float: int}   Mapping from bin centre (rounded angle) to count.
-
-    Core logic
-    ----------
-    For each angle a:
-        bin = round(a / bin_width) * bin_width   <- snap to nearest bin
-        histogram[bin] += 1
-    This is a hand-coded loop; we do not call np.histogram or any library.
+    in the corresponding bin. Stored as a plain Python dict: {bin_centre -> total_weight}.
     """
     histogram = {}
-    for a in angles:
-        # Snap to nearest bin by rounding to multiples of bin_width
+    if weights is None:
+        weights = [1.0] * len(angles)
+
+    for a, w in zip(angles, weights):
         bin_key = round(round(a / bin_width) * bin_width, 6)
-        if bin_key in histogram:
-            histogram[bin_key] += 1
-        else:
-            histogram[bin_key] = 1
+        histogram[bin_key] = histogram.get(bin_key, 0.0) + float(w)
     return histogram
 
 
@@ -267,21 +259,22 @@ def estimate_skew_angle(
     # OpenCV <5 returns shape (N, 1, 4); OpenCV >=5 returns shape (N, 4).
     # Flatten each row to a 1-D sequence of 4 values to handle both formats.
     all_angles = []
+    all_lengths = []
     for line in lines:
         row = line.flatten()          # works for both (1,4) and (4,) rows
         x1, y1, x2, y2 = int(row[0]), int(row[1]), int(row[2]), int(row[3])
         angle = compute_line_angle(x1, y1, x2, y2)
-        all_angles.append(angle)
-
-    # Step 2: keep only near-horizontal angles
-    near_horizontal = filter_near_horizontal(all_angles, max_skew=max_skew)
+        skew = normalize_to_skew(angle)
+        if -max_skew <= skew <= max_skew:
+            all_angles.append(skew)
+            all_lengths.append(float(np.hypot(x2 - x1, y2 - y1)))
 
     # Step 3: require at least 3 qualifying lines for a reliable estimate
-    if len(near_horizontal) < 3:
+    if len(all_angles) < 3:
         return 0.0
 
-    # Step 4: build histogram and find dominant angle
-    histogram = build_angle_histogram(near_horizontal, bin_width=0.5)
+    # Step 4: build length-weighted histogram and find dominant angle
+    histogram = build_angle_histogram(all_angles, weights=all_lengths, bin_width=0.5)
     dominant = find_dominant_angle(histogram)
 
     # Step 5: ignore sub-threshold angles (image is already straight enough)
@@ -300,28 +293,10 @@ def rotate_image(image: np.ndarray, angle: float) -> np.ndarray:
     Rotate a BGR image by the given angle around its centre.
 
     Uses OpenCV's getRotationMatrix2D + warpAffine (the library-based half
-    of the 50/50 requirement).  The canvas size is kept identical to the
-    input so the pipeline contract (same H×W×3 shape) is preserved.
-
-    Parameters
-    ----------
-    image : np.ndarray   BGR image, shape (H, W, 3), dtype uint8.
-    angle : float        Rotation angle in degrees.  Positive values rotate
-                         counter-clockwise in OpenCV convention.
-
-    Returns
-    -------
-    np.ndarray   Rotated BGR image.  Shape: (H, W, 3).  Dtype: uint8.
-                 Pixels outside the original image bounds are filled with
-                 white (255, 255, 255) to match the typical white background
-                 of scanned documents.
-
-    Why INTER_CUBIC and BORDER_CONSTANT with white fill:
-    ----------------------------------------------------
-    INTER_CUBIC provides smoother interpolation than INTER_LINEAR for small
-    rotation angles, reducing staircase artefacts on text strokes.
-    BORDER_CONSTANT with a white fill avoids black corners (which can confuse
-    the subsequent border_removal step into thinking there is content there).
+    of the 50/50 requirement). Canvas size is kept identical to input so
+    the pipeline contract (H×W×3 shape) is preserved.
+    Uses BORDER_REPLICATE to avoid introducing artificial white triangles
+    in the corners, ensuring downstream border detection is not corrupted.
     """
     h, w = image.shape[:2]
     centre = (w / 2.0, h / 2.0)
@@ -335,8 +310,7 @@ def rotate_image(image: np.ndarray, angle: float) -> np.ndarray:
         rotation_matrix,
         (w, h),
         flags=cv2.INTER_CUBIC,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(255, 255, 255),   # white fill for clean background
+        borderMode=cv2.BORDER_REPLICATE,
     )
     return rotated
 
@@ -446,8 +420,8 @@ def deskew_image(raw_img: np.ndarray, binary_img: np.ndarray) -> tuple:
     # where text lines are finite in length.
     #
     h, w = binary_img.shape
-    min_line_length = max(50, min(h, w) // 10)   # adapt to image size
-    max_line_gap = 10
+    min_line_length = max(40, min(80, min(h, w) // 40))
+    max_line_gap = max(10, min(h, w) // 150)
 
     lines = cv2.HoughLinesP(
         edges,
@@ -458,6 +432,17 @@ def deskew_image(raw_img: np.ndarray, binary_img: np.ndarray) -> tuple:
         maxLineGap=max_line_gap,
     )
 
+    if lines is None or len(lines) < 10:
+        # Robust fallback for images with shorter text lines or high noise
+        lines = cv2.HoughLinesP(
+            edges,
+            rho=1,
+            theta=np.pi / 180.0,
+            threshold=50,
+            minLineLength=35,
+            maxLineGap=12,
+        )
+
     # ---- Step 4: Custom skew-angle estimation  [CUSTOM] --------------------
     #
     # Calls our hand-coded pipeline:
@@ -466,19 +451,21 @@ def deskew_image(raw_img: np.ndarray, binary_img: np.ndarray) -> tuple:
     #   build_angle_histogram()      : count lines per 0.5° bin
     #   find_dominant_angle()        : weighted mean of top bins
     #
-    skew_angle = estimate_skew_angle(lines, max_skew=15.0, min_angle_threshold=0.3)
+    skew_angle = estimate_skew_angle(lines, max_skew=20.0, min_angle_threshold=0.3)
 
     # ---- Step 5: Image rotation  [LIBRARY — cv2.warpAffine via rotate_image]
     #
-    # Rotate the raw BGR image by -skew_angle to cancel the detected tilt.
-    # The negation converts our measured skew angle (how much the document
-    # is tilted) into the correction angle (how much we must rotate back).
+    # In image coordinates, a line with slope dy/dx = atan2(dy, dx) = angle
+    # is tilted clockwise (downward) if positive, counter-clockwise (upward) if negative.
+    # cv2.getRotationMatrix2D(centre, angle) rotates counter-clockwise for positive,
+    # clockwise for negative.
+    # Rotating by skew_angle around the center levels the tilted document.
     #
     if skew_angle == 0.0:
         # No rotation needed; return a copy to maintain consistent behaviour
         rotated_img = raw_img.copy()
     else:
-        rotated_img = rotate_image(raw_img, angle=-skew_angle)
+        rotated_img = rotate_image(raw_img, angle=skew_angle)
 
     # Ensure the output dtype is uint8 (rotation should preserve it, but guard)
     if rotated_img.dtype != np.uint8:
